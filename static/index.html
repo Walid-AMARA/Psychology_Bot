@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Conseiller de Carrière</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <style>
+        body {
+            /* background-color: #121212; */
+            background-color: white;
+            color: #e0e0e0;
+        }
+        .card {
+            background-color: #1e1e1e;
+            border: none;
+        }
+        .btn-primary {
+            background-color: #6200ea;
+            border: none;
+        }
+        .btn-primary:hover {
+            background-color: #3700b3;
+        }
+        #chatBox {
+            background-color: #2a2a2a;
+            color: black;
+            height: 300px;
+            overflow-y: auto;
+            padding: 10px;
+        }
+        .user-message {
+            color: #03dac6;
+            text-align: right;
+        }
+        .ai-message {
+            color: black;
+        }
+        #logo {
+            display: block;
+            margin: 0 auto 20px;
+            width: 200px;
+        }
+        #loading {
+            display: none;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container my-5">
+        <img id="logo" src="/static/psyc_logo.webp" alt="Logo">
+        <h1 class="text-center mb-4" style="color: black;">Le Magicien de la Reconversion</h1>
+        <div class="card shadow">
+            <div class="card-body">
+                <form id="uploadForm">
+                    <h4 style="color: #eee;">Importer votre test de personnalité (PDF)</h4>
+                    <div class="mb-3">
+                        <input type="file" id="pdfInput" accept="application/pdf" class="form-control" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Analyser</button>
+                </form>
+                <div id="loading" class="mt-3">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Chargement...</span>
+                    </div>
+                </div>
+                <hr>
+                <div id="chatInterface" class="mt-4" style="display: none;">
+                    <h4 style="color: #eee;">Discutez avec votre conseiller</h4>
+                    <div id="chatBox"></div>
+                    <div class="input-group mt-3">
+                        <input type="text" id="userMessage" class="form-control" placeholder="Posez une question...">
+                        <button id="sendMessage" class="btn btn-primary">Envoyer</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const uploadForm = document.getElementById('uploadForm');
+        const pdfInput = document.getElementById('pdfInput');
+        const chatInterface = document.getElementById('chatInterface');
+        const chatBox = document.getElementById('chatBox');
+        const userMessage = document.getElementById('userMessage');
+        const sendMessage = document.getElementById('sendMessage');
+        const loading = document.getElementById('loading');
+
+        let conversationId = null;
+
+        async function extractTextFromPDF(file) {
+            const pdf = await pdfjsLib.getDocument(URL.createObjectURL(file)).promise;
+            let text = '';
+            for (let i = 0; i < pdf.numPages; i++) {
+                const page = await pdf.getPage(i + 1);
+                const content = await page.getTextContent();
+                text += content.items.map(item => item.str).join(' ');
+            }
+            return text.trim();
+        }
+
+        function toggleLoading(show) {
+            loading.style.display = show ? 'block' : 'none';
+        }
+
+        uploadForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+
+            if (!pdfInput.files.length) {
+                alert("Veuillez sélectionner un fichier PDF.");
+                return;
+            }
+
+            const file = pdfInput.files[0];
+            let extractedText;
+            try {
+                extractedText = await extractTextFromPDF(file);
+            } catch (error) {
+                alert("Erreur lors de l'extraction du texte du PDF. Veuillez réessayer.");
+                console.error(error);
+                return;
+            }
+
+            if (!extractedText) {
+                alert("Impossible d'extraire le texte du fichier PDF.");
+                return;
+            }
+
+            toggleLoading(true);
+
+            try {
+                const response = await fetch('http://127.0.0.1:8000/api/analyze', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: extractedText })
+                });
+
+                toggleLoading(false);
+
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.error) {
+                        alert(`Erreur d'analyse: ${data.error}`);
+                    } else {
+                        conversationId = data.conversation_id;
+                        chatInterface.style.display = 'block';
+                        chatBox.innerHTML += `<div class="ai-message mb-2"><strong>Conseiller:</strong> ${data.analysis}</div>`;
+                    }
+                } else {
+                    alert("Échec de l'analyse. Réponse du serveur non valide.");
+                }
+            } catch (error) {
+                console.error("Erreur lors de l'envoi de la requête:", error);
+                toggleLoading(false);
+                alert("Erreur: Impossible de se connecter au serveur.");
+            }
+        });
+
+        sendMessage.addEventListener('click', async () => {
+            const message = userMessage.value.trim();
+            if (!message) {
+                alert("Veuillez saisir un message avant d'envoyer.");
+                return;
+            }
+
+            chatBox.innerHTML += `<div class="user-message mb-2"><strong>Vous:</strong> ${message}</div>`;
+            userMessage.value = '';
+            toggleLoading(true);
+
+            try {
+                const response = await fetch('http://127.0.0.1:8000/api/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ conversation_id: conversationId, message })
+                });
+
+                toggleLoading(false);
+
+                if (response.ok) {
+                    const data = await response.json();
+                    chatBox.innerHTML += `<div class="ai-message mb-2"><strong>Conseiller:</strong> ${data.reply}</div>`;
+                    chatBox.scrollTop = chatBox.scrollHeight;
+                } else {
+                    chatBox.innerHTML += `<div class="text-danger mb-2"><strong>Conseiller:</strong> Une erreur s'est produite. Réessayez.</div>`;
+                }
+            } catch (error) {
+                console.error("Erreur lors de l'envoi du message:", error);
+                toggleLoading(false);
+                chatBox.innerHTML += `<div class="text-danger mb-2"><strong>Conseiller:</strong> Impossible de se connecter au serveur.</div>`;
+            }
+        });
+    </script>
+</body>
+</html>
